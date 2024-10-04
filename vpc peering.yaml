@@ -1,0 +1,194 @@
+Resources:
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: keyname
+          Value: VPC1
+
+  VPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: keyname
+          Value: VPC2
+
+  VPCPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref VPC1
+      PeerVpcId: !Ref VPC2
+
+#VPC for RDS Database (Private Sub in vpc1)
+  PrivateSubnetVPC1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs "" ]
+      Tags:
+        - Key: keyname
+          Value: Private-Subnet-VPC1
+
+#VPC for rds database in az2
+
+  PrivateSubnetVPC1AZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs "" ]
+      Tags:
+        - Key: keyname
+          Value: Private-Subnet-VPC1-AZ2
+
+#VPC for web Server (Public subnet in vpc2)
+  PublicSubnetVPC2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      CidrBlock: 10.1.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs "" ]
+      Tags:
+        - Key: keyname
+          Value: Public-Subnet-VPC2
+
+# create igw for vpc2 for web servers
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC2
+      InternetGatewayId: !Ref InternetGateway
+
+# route table for public subet in vpc2
+  PublicRouteTableVPC2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTableVPC2 
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway 
+ 
+# Associate public route table with public subnet
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      SubnetId: !Ref PublicSubnetVPC2
+      RouteTableId: !Ref PublicRouteTableVPC2
+
+# Create Security Groups for RDS in vpc 1
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Allow MySQL traffic from web servers  
+      VpcId: !Ref VPC1
+      SecurityGroupIngress: 
+        - IpProtocol: tcp 
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGrouId: !Ref WebServerSecurityGroup 
+        
+# SG for web server in vpc2
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Allow HTTP and ssh
+      VpcId: !Ref VPC2
+      SecurityGroupIngress: 
+        - IpProtocol: tcp 
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp 
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+# RDS Instance (MYSQL) in private subnet in vpc1
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro 
+      AllocatedStorage: "20"
+      DBName: MyDatabase
+      Engine: MySQL
+      MasterUsername: admin 
+      MasterUserPassword: password123
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      MultiAZ: true
+      PubliclyAccessible: false 
+      StorageType: "gp2"
+
+    # RDS subnet group
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Private Subnet Group for RDS"
+      SubnetIds:
+        - !Ref PrivateSubnetVPC1
+        - !Ref PrivateSubnetVPC1AZ2
+  
+# EC2 Instance for web server in vpc 2
+
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-0a5c3558529277641
+      SubnetId: !Ref PublicSubnetVPC2
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      KeyName: vockey
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y 
+          yum install -y httpd phd php php-mysql
+          systemctl start httpd
+          systemctl enable httpd 
+          echo "<?php phpinfo(); ?>" > /var/www/html/index.php
+          echo "Web Server Connected to RDS!" > /var/www/html/index.html
+          # Test connectoon to RDS
+          echo "<?php
+          \$conn = new mysqli('DB_ENDPOINT', 'admin', 'password123', 'MyDatabase');
+          if (\$conn->connect_error) {
+            die('Connection failed: ' . \$conn->connect_error);
+          }
+          echo 'Connected SuccesFully to RDS!';
+          # mysqli_close(\$conn);
+          ?>" /var/www/html/db_test.php
+
+Outputs:
+  WebServerPublicIp:
+    Description: Public IP address of the web server instance
+    Value: !GetAtt WebServerInstance.PublicIp
+
+  RDSInstanceEndpoint:
+    Description: Endpoint of the RDS Instance
+    Value: !GetAtt RDSInstance.Endpoint.Address
+  
+#IAM ROle
+
+
