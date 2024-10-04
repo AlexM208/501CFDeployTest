@@ -19,7 +19,7 @@ jobs:
       - name: Deploy Stack
         id: deploy_stack
         run: | 
-          aws cloudformation deploy --stack-name citest --template-file vpcpeering.yml
+          aws cloudformation deploy --stack-name citest --template-file vpcpeering.yaml
       - name: Echo Stack Outputs
         run: |
           # Parse the output values and print them
