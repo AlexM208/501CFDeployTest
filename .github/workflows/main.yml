@@ -24,4 +24,4 @@ jobs:
         run: |
           # Parse the output values and print them
           echo "Stack Outputs:"
-          aws cloud formation describe-stacks --stack-name citest --querry "Stack[0].Outputs" --output text
+          aws cloudformation describe-stacks --stack-name citest --query "Stack[0].Outputs" --output text
